@@ -14,12 +14,19 @@
 
 ## 安装
 
-### 方式一：Claude Code 技能包（推荐）
+### 方式一：一行命令（最快）
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Markhufei/three-layer-test/master/setup.sh)
+```
+
+在你的项目根目录运行即可，自动检测项目类型并安装。
+
+### 方式二：Claude Code 技能包
 
 将本仓库克隆为 Claude Code 技能包：
 
 ```bash
-# 克隆到你的 Claude Code skills 目录
 git clone https://github.com/Markhufei/three-layer-test.git \
   ~/.claude/skills/three-layer-test
 ```
@@ -31,14 +38,6 @@ git clone https://github.com/Markhufei/three-layer-test.git \
 ```
 
 Claude Code 会自动执行全部 10 步安装流程。
-
-### 方式二：一键脚本
-
-```bash
-# 在你的项目根目录运行
-git clone https://github.com/Markhufei/three-layer-test.git /tmp/three-layer-test
-bash /tmp/three-layer-test/setup.sh
-```
 
 ### 方式三：手动安装
 
