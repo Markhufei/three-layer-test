@@ -1,0 +1,177 @@
+name: Quinn QA
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: quinn-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx vitest run --reporter=verbose
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npx playwright test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  ai-qa-review:
+    name: AI QA Review
+    runs-on: ubuntu-latest
+    needs: [unit-tests, e2e-tests]
+    if: success()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run checks
+        id: checks
+        run: |
+          # 类型检查
+          echo "## tsc --noEmit" > check-output.txt
+          npx tsc --noEmit >> check-output.txt 2>&1 || true
+
+          # Lint
+          echo -e "\n## eslint" >> check-output.txt
+          npx eslint src/ >> check-output.txt 2>&1 || true
+
+          # 调试代码搜索
+          echo -e "\n## Debug artifacts" >> check-output.txt
+          echo "### console.log (excl tests):" >> check-output.txt
+          grep -rn "console\.log" src/ --include="*.ts" --include="*.tsx" --exclude="*.test.*" >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
+          echo "### debugger:" >> check-output.txt
+          grep -rn "debugger" src/ >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
+          echo "### TODO/FIXME:" >> check-output.txt
+          grep -rn "TODO\|FIXME\|HACK" src/ >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git diff origin/master...HEAD > pr-diff.txt
+          echo "lines=$(wc -l < pr-diff.txt)" >> $GITHUB_OUTPUT
+
+      - name: AI QA Analysis
+        id: ai-review
+        if: steps.diff.outputs.lines != '0'
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
+        run: |
+          DIFF=$(head -200 pr-diff.txt | jq -Rs .)
+          CHECKS=$(cat check-output.txt | jq -Rs .)
+
+          # 构建 prompt
+          PROMPT="你是一个 QA 工程师。分析以下 PR 变更和检查结果，输出标准 QA 报告。\n\n## PR 变更\n${DIFF}\n\n## 检查结果\n${CHECKS}\n\n输出格式：\n1. 变更摘要（3句话内）\n2. 发现的问题（按严重程度分类 🔴/🟡/🟣）\n3. 最终 VERDICT: PASS 或 FAIL"
+
+          # 调用 AI API（Anthropic 兼容格式）
+          BODY=$(jq -n \
+            --arg prompt "$PROMPT" \
+            --arg model "$AI_MODEL" \
+            '{
+              model: $model,
+              max_tokens: 2000,
+              messages: [{ role: "user", content: ($prompt) }]
+            }')
+
+          echo "Model: $AI_MODEL"
+          echo "Endpoint: $AI_API_ENDPOINT"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "$AI_API_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $AI_API_KEY" \
+            -H "anthropic-version: $AI_API_VERSION" \
+            -d "$BODY")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY_ONLY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $(echo "$BODY_ONLY" | head -c 500)"
+
+          # 提取文本内容
+          AI_TEXT=$(echo "$BODY_ONLY" | jq -r '.content[0].text // .error.message // "AI analysis unavailable"')
+          echo "$AI_TEXT" > qa-report.md
+
+          echo "::group::QA Report"
+          cat qa-report.md
+          echo "::endgroup::"
+
+      - name: Post QA Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            let report = '## Quinn QA Report\n\n';
+
+            // 检查结果
+            report += '| Check | Result |\n|-------|--------|\n';
+            report += '| Unit Tests | ✅ Passed |\n';
+            report += '| E2E Tests | ✅ Passed |\n';
+
+            // AI 分析
+            if (fs.existsSync('qa-report.md')) {
+              const aiReport = fs.readFileSync('qa-report.md', 'utf8');
+              report += '\n### AI Analysis\n\n' + aiReport;
+            } else {
+              report += '\n### AI Analysis\n\n⚠️ AI review skipped (no changes detected)';
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
