@@ -182,11 +182,11 @@ chmod +x .git/hooks/pre-commit
 
 | Variable | 默认值 | 说明 |
 |----------|--------|------|
-| `AI_API_ENDPOINT` | `https://api.anthropic.com/v1/messages` | API 地址 |
-| `AI_MODEL` | `claude-sonnet-4-6` | 模型名称 |
+| `AI_API_ENDPOINT` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | 百炼-Coding Plan |
+| `AI_MODEL` | `qwen3.6-plus` | 模型名称 |
 | `AI_API_VERSION` | `2023-06-01` | API 版本 |
 
-Secret 需设置：`AI_API_KEY`
+Secret 需设置：`AI_API_KEY`（百炼控制台获取）
 
 workflow 文件内容从当前仓库 `.github/workflows/quinn-qa.yml` 复制。
 
@@ -231,8 +231,8 @@ echo "=== L3 Workflow ==="
 
 | 变量 | 设置值 | 示例 |
 |------|--------|------|
-| `AI_MODEL` | 模型名称 | `qwen3-coder-plus` / `claude-opus-4-7` / `gpt-4o` |
-| `AI_API_ENDPOINT` | API 地址 | `https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages` |
+| `AI_MODEL` | 模型名称 | `qwen3.6-plus` / `claude-opus-4-7` |
+| `AI_API_ENDPOINT` | API 地址 | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
 | `AI_API_VERSION` | API 版本 | `2023-06-01` |
 
 ### 配置 API 密钥（GitHub Secrets）
@@ -241,16 +241,15 @@ Settings → Secrets and variables → Actions → Repository secrets：
 
 | Secret | 值 |
 |--------|-----|
-| `AI_API_KEY` | 你的 API Key |
+| `AI_API_KEY` | 百炼控制台获取 |
 
 ### 常用模型配置参考
 
 | 平台 | AI_MODEL | AI_API_ENDPOINT |
 |------|----------|-----------------|
+| 百炼-Coding Plan（默认） | `qwen3.6-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
 | Anthropic 官方 | `claude-sonnet-4-6` | `https://api.anthropic.com/v1/messages` |
 | Anthropic Opus | `claude-opus-4-7` | `https://api.anthropic.com/v1/messages` |
-| 阿里云 DashScope | `qwen3-coder-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages` |
-| OpenAI 兼容 | `gpt-4o` | 服务商地址 |
 
 ### 日常使用
 

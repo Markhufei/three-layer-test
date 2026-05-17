@@ -122,8 +122,8 @@ jobs:
         if: steps.prepare.outputs.diff_lines != '0'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
-          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://coding.dashscope.aliyuncs.com/apps/anthropic' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'qwen3.6-plus' }}
           AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
         run: |
           DIFF=$(cat pr-diff.txt | jq -Rs .)
@@ -141,8 +141,8 @@ jobs:
         if: steps.prepare.outputs.diff_lines != '0'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
-          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://coding.dashscope.aliyuncs.com/apps/anthropic' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'qwen3.6-plus' }}
           AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
         run: |
           DIFF=$(cat pr-diff.txt | jq -Rs .)
@@ -158,8 +158,8 @@ jobs:
         if: steps.prepare.outputs.diff_lines != '0'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
-          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://coding.dashscope.aliyuncs.com/apps/anthropic' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'qwen3.6-plus' }}
           AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
         run: |
           DIFF=$(cat pr-diff.txt | jq -Rs .)
