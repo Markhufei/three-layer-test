@@ -20,7 +20,7 @@
 
 ```bash
 # 克隆到你的 Claude Code skills 目录
-git clone https://github.com/{your-org}/three-layer-test.git \
+git clone https://github.com/Markhufei/three-layer-test.git \
   ~/.claude/skills/three-layer-test
 ```
 
@@ -36,7 +36,7 @@ Claude Code 会自动执行全部 10 步安装流程。
 
 ```bash
 # 在你的项目根目录运行
-git clone https://github.com/{your-org}/three-layer-test.git /tmp/three-layer-test
+git clone https://github.com/Markhufei/three-layer-test.git /tmp/three-layer-test
 bash /tmp/three-layer-test/setup.sh
 ```
 
