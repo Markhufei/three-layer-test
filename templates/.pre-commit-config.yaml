@@ -1,0 +1,109 @@
+# pre-commit-config.yaml — L2: 声明式提交前检查 (三层自动测试)
+# 用法:
+#   方式 A: 使用 pre-commit 框架: pre-commit install
+#   方式 B: 使用 prek (Rust 加速版): prek install
+#   方式 C: 不安装框架，setup.sh 会生成兼容的 bash hook
+#
+# 用户可按需启用/禁用任何 hook，修改此文件即可
+
+default_install_hook_types: [pre-commit]
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  # === 通用检查（所有语言）===
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=5000']
+        name: 防止提交大文件 (>5MB)
+      - id: detect-private-key
+        name: 检测私钥泄漏
+      - id: check-merge-conflict
+        name: 检测未解决的合并冲突
+      - id: trailing-whitespace
+        name: 清理行尾空白
+      - id: end-of-file-fixer
+        name: 确保文件以换行符结尾
+      - id: check-yaml
+        name: YAML 语法检查
+      - id: check-json
+        name: JSON 语法检查
+
+  # === Node.js 项目检查 ===
+  - repo: local
+    hooks:
+      - id: typecheck
+        name: TypeScript 类型检查
+        entry: npx tsc --noEmit
+        language: system
+        pass_filenames: false
+        types: [ts, tsx]
+        stages: [pre-commit]
+
+      - id: lint
+        name: ESLint 代码规范
+        entry: npx eslint
+        language: system
+        types: [ts, tsx]
+
+      - id: test
+        name: vitest 单元测试
+        entry: npx vitest run
+        language: system
+        pass_filenames: false
+        types: [ts, tsx]
+        stages: [pre-commit]
+
+      - id: debug-scan
+        name: 调试代码扫描
+        entry: bash -c 'FOUND=false; for f in "$@"; do if grep -n "console\.log\|debugger" "$f" 2>/dev/null; then FOUND=true; fi; done; if $FOUND; then echo "ERROR: debug code found in staged files"; exit 1; fi'
+        language: system
+        types: [ts, tsx]
+
+  # === Python 项目检查 ===
+  - repo: local
+    hooks:
+      - id: flake8
+        name: flake8 代码规范
+        entry: flake8
+        language: system
+        types: [python]
+
+      - id: pytest
+        name: pytest 单元测试
+        entry: pytest -x -q
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-commit]
+
+      - id: mypy
+        name: mypy 类型检查
+        entry: mypy
+        language: system
+        types: [python]
+
+  # === Go 项目检查 ===
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt 格式化检查
+        entry: gofmt -l
+        language: system
+        types: [go]
+
+      - id: go-test
+        name: go test 单元测试
+        entry: go test ./...
+        language: system
+        pass_filenames: false
+        types: [go]
+        stages: [pre-commit]
+
+      - id: go-vet
+        name: go vet 静态分析
+        entry: go vet
+        language: system
+        types: [go]

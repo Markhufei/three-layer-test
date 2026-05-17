@@ -1,9 +1,9 @@
 ---
 name: three-layer-test
 preamble-tier: 1
-version: 1.0.0
+version: 2.0.0
 description: |
-  三层全自动测试系统 — 为项目一键配置 L1 编辑即测 + L2 提交即检 + L3 PR 即审。
+  三层全自动测试系统 v2 — L1 编辑即测 + L2 声明式配置 + L3 多 Agent 分析。
   用户无需手动运行任何测试命令。使用场景：为新项目或现有项目添加全生命周期测试保障。
   触发词："三层自动测试"、"three-layer-test"、"为这个项目启动三层自动测试"。
 allowed-tools:
@@ -22,8 +22,8 @@ allowed-tools:
 | 层级 | 触发时机 | 执行内容 |
 |------|---------|---------|
 | L1 编辑即测 | Claude Code 编辑源码后 | 自动运行 vitest/jest/pytest |
-| L2 提交即检 | git commit 时 | tsc + eslint + vitest + 调试代码扫描 |
-| L3 PR 即审 | 推送 PR 到 GitHub 时 | Unit Tests + E2E Tests + AI QA Review |
+| L2 提交即检 | git commit 时 | 声明式 .pre-commit-config.yaml，按需开关 hook |
+| L3 PR 即审 | 推送 PR 到 GitHub 时 | 3 Agent 并行（Security + Bug + Style）+ 行级评论 |
 
 ## 第 1 步：检测项目状态
 

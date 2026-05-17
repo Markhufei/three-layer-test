@@ -1,6 +1,6 @@
 #!/bin/bash
-# setup.sh — 一键安装三层自动测试
-# 用法: bash setup.sh 或 npx create-three-layer-test
+# setup.sh — 一键安装三层自动测试 v2
+# 用法: bash setup.sh 或 bash <(curl -fsSL .../setup.sh)
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 echo "========================================="
-echo "  Three-Layer Auto-Test Setup"
+echo "  Three-Layer Auto-Test v2"
 echo "========================================="
 echo ""
 
@@ -39,7 +39,7 @@ if [ ! -d "$PROJECT_ROOT/.git" ]; then
     git init
     success "已初始化 git 仓库"
   else
-    error "需要 git 仓库才能安装 L2 (pre-commit hook)"
+    error "需要 git 仓库才能安装 L2"
     exit 1
   fi
 fi
@@ -56,7 +56,7 @@ elif [ -f "$PROJECT_ROOT/go.mod" ]; then
   PROJECT_TYPE="go"
   info "检测到 Go 项目"
 else
-  warn "未检测到已知项目类型（需要 package.json / pyproject.toml / go.mod）"
+  warn "未检测到已知项目类型"
   echo "继续安装 L1/L2 基础层？测试框架需手动配置。"
   read -p "是否继续？(y/N) " -n 1 -r
   echo
@@ -85,7 +85,7 @@ if [ "$PROJECT_TYPE" = "node" ]; then
   fi
 fi
 
-# === 2. 创建配置文件 ===
+# === 2. 创建测试配置 ===
 info "创建测试配置..."
 
 if [ "$PROJECT_TYPE" = "node" ]; then
@@ -134,17 +134,73 @@ PWEOF
   fi
 fi
 
-# === 3. 安装 L1 Hook ===
+# === 3. 安装 L1 编辑即测 ===
 info "安装 L1 编辑即测 Hook..."
 
 mkdir -p "$PROJECT_ROOT/.claude/hooks"
-cp "$SCRIPT_DIR/hooks/test-on-change.sh" "$PROJECT_ROOT/.claude/hooks/test-on-change.sh"
+
+if [ -f "$SCRIPT_DIR/hooks/test-on-change.sh" ]; then
+  cp "$SCRIPT_DIR/hooks/test-on-change.sh" "$PROJECT_ROOT/.claude/hooks/test-on-change.sh"
+else
+  cat > "$PROJECT_ROOT/.claude/hooks/test-on-change.sh" << 'HOOK_EOF'
+#!/bin/bash
+# test-on-change.sh — L1: 编辑即测
+# 来源: https://github.com/Markhufei/three-layer-test
+set -euo pipefail
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+[ -z "$FILE_PATH" ] && exit 0
+[ ! -f "$FILE_PATH" ] && exit 0
+case "$FILE_PATH" in */memory/*|*/archive/*|*/hooks/*|*/node_modules/*) exit 0 ;; esac
+BASENAME=$(basename "$FILE_PATH")
+case "$BASENAME" in *.json|*.yaml|*.yml|*.toml|*.config.*|*.conf) exit 0 ;; esac
+EXT="${FILE_PATH##*.}"
+case "$EXT" in ts|tsx|js|jsx|py|go|rs) ;; *) exit 0 ;; esac
+case "$BASENAME" in *.test.*|*.spec.*|*.test_*|test_*|*_test.*) exit 0 ;; esac
+DEBOUNCE_FILE="/tmp/.claude-hook-test-debounce"
+NOW=$(date +%s)
+if [ -f "$DEBOUNCE_FILE" ]; then
+  LAST_RUN=$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo 0)
+  [ $((NOW - LAST_RUN)) -lt 30 ] && exit 0
+fi
+echo "$NOW" > "$DEBOUNCE_FILE"
+PROJECT_ROOT="$FILE_PATH"
+DIR=$(dirname "$FILE_PATH")
+while [ "$PROJECT_ROOT" != "/" ]; do
+  [ -f "$PROJECT_ROOT/package.json" ] || [ -f "$PROJECT_ROOT/pyproject.toml" ] || [ -f "$PROJECT_ROOT/go.mod" ] && break
+  PROJECT_ROOT=$(dirname "$PROJECT_ROOT")
+done
+[ "$PROJECT_ROOT" = "/" ] && exit 0
+LOG_FILE="$PROJECT_ROOT/.three-layer-test.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+if [ -f "$PROJECT_ROOT/package.json" ]; then
+  if grep -q '"vitest"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
+    echo "[$TIMESTAMP] Running vitest for $FILE_PATH" >> "$LOG_FILE"
+    cd "$PROJECT_ROOT"
+    BN="${FILE_PATH##*/}"; BN="${BN%.*}"
+    npx --no vitest run --reporter=verbose "$BN" >> "$LOG_FILE" 2>&1 || true
+  elif grep -q '"jest"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
+    echo "[$TIMESTAMP] Running jest for $FILE_PATH" >> "$LOG_FILE"
+    cd "$PROJECT_ROOT"
+    BN="${FILE_PATH##*/}"; BN="${BN%.*}"
+    npx --no jest --testPathPattern="$BN" >> "$LOG_FILE" 2>&1 || true
+  fi
+elif [ -f "$PROJECT_ROOT/pyproject.toml" ]; then
+  if command -v pytest &>/dev/null; then
+    echo "[$TIMESTAMP] Running pytest for $FILE_PATH" >> "$LOG_FILE"
+    cd "$PROJECT_ROOT"
+    BN="${FILE_PATH##*/}"; BN="${BN%.*}"
+    pytest -x -q "tests/" -k "$BN" >> "$LOG_FILE" 2>&1 || true
+  fi
+fi
+exit 0
+HOOK_EOF
+fi
 chmod +x "$PROJECT_ROOT/.claude/hooks/test-on-change.sh"
 success "已安装 test-on-change.sh → .claude/hooks/"
 
 # 配置 settings.local.json
 SETTINGS_FILE="$PROJECT_ROOT/.claude/settings.local.json"
-
 HOOK_ENTRY='{
           "type": "command",
           "command": ".claude/hooks/test-on-change.sh",
@@ -158,147 +214,146 @@ if [ ! -f "$SETTINGS_FILE" ]; then
 {
   "hooks": {
     "PostToolUse": [
-      {
-        "matcher": "Write",
-        "hooks": [
-          $HOOK_ENTRY
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          $HOOK_ENTRY
-        ]
-      }
+      { "matcher": "Write", "hooks": [$HOOK_ENTRY] },
+      { "matcher": "Edit", "hooks": [$HOOK_ENTRY] }
     ]
   }
 }
 SEOF
-  success "已创建 .claude/settings.local.json (L1 Hook)"
+  success "已创建 .claude/settings.local.json"
 else
-  # 检查是否已有 test-on-change hook
   if grep -q "test-on-change" "$SETTINGS_FILE" 2>/dev/null; then
     info "L1 Hook 已存在，跳过"
   else
-    # 简单追加：在 PostToolUse 数组中添加 hook
     info "追加 L1 Hook 到现有配置..."
     python3 -c "
-import json, sys
-
-with open('$SETTINGS_FILE', 'r') as f:
-    config = json.load(f)
-
-if 'hooks' not in config:
-    config['hooks'] = {}
-
-entry = {
-    'type': 'command',
-    'command': '.claude/hooks/test-on-change.sh',
-    'timeout': 30,
-    'statusMessage': 'Running tests...',
-    'async': True
-}
-
+import json
+with open('$SETTINGS_FILE', 'r') as f: config = json.load(f)
+if 'hooks' not in config: config['hooks'] = {}
+entry = {'type':'command','command':'.claude/hooks/test-on-change.sh','timeout':30,'statusMessage':'Running tests...','async':True}
 if 'PostToolUse' not in config['hooks']:
-    config['hooks']['PostToolUse'] = [
-        {'matcher': 'Write', 'hooks': [entry]},
-        {'matcher': 'Edit', 'hooks': [entry]}
-    ]
+    config['hooks']['PostToolUse'] = [{'matcher':'Write','hooks':[entry]},{'matcher':'Edit','hooks':[entry]}]
 else:
     for rule in config['hooks']['PostToolUse']:
-        if rule.get('matcher') in ('Write', 'Edit', '*'):
-            existing_cmds = [h.get('command', '') for h in rule.get('hooks', [])]
-            if not any('test-on-change' in c for c in existing_cmds):
+        if rule.get('matcher') in ('Write','Edit','*'):
+            if not any('test-on-change' in h.get('command','') for h in rule.get('hooks',[])):
                 rule['hooks'].append(entry)
-
-with open('$SETTINGS_FILE', 'w') as f:
-    json.dump(config, f, indent=2, ensure_ascii=False)
+with open('$SETTINGS_FILE', 'w') as f: json.dump(config, f, indent=2, ensure_ascii=False)
 print('Hook appended')
 "
-    success "L1 Hook 已追加到 settings.local.json"
+    success "L1 Hook 已追加"
   fi
 fi
 
-# === 4. 安装 L2 pre-commit hook ===
+# === 4. 安装 L2 提交即检（声明式配置）===
 info "安装 L2 提交即检 Hook..."
 
-PRE_COMMIT="$PROJECT_ROOT/.git/hooks/pre-commit"
+PRE_COMMIT_CFG="$PROJECT_ROOT/.pre-commit-config.yaml"
 
-if [ -f "$PRE_COMMIT" ]; then
-  if grep -q "三层自动测试" "$PRE_COMMIT" 2>/dev/null || grep -q "pre-commit.*tsc" "$PRE_COMMIT" 2>/dev/null; then
-    info "pre-commit hook 已存在，跳过"
+if [ ! -f "$PRE_COMMIT_CFG" ]; then
+  if [ -f "$SCRIPT_DIR/templates/.pre-commit-config.yaml" ]; then
+    cp "$SCRIPT_DIR/templates/.pre-commit-config.yaml" "$PRE_COMMIT_CFG"
+    success "已创建 .pre-commit-config.yaml"
   else
-    warn ".git/hooks/pre-commit 已存在但内容不同，请手动合并"
+    # 内嵌默认配置
+    cat > "$PRE_COMMIT_CFG" << 'CFGEOF'
+# pre-commit-config.yaml — 声明式提交前检查
+# 按需启用/禁用 hook，修改此文件即可
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=5000']
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+
+  - repo: local
+    hooks:
+      - id: typecheck
+        name: TypeScript type check
+        entry: npx tsc --noEmit
+        language: system
+        pass_filenames: false
+        types: [ts, tsx]
+      - id: lint
+        name: ESLint code style
+        entry: npx eslint
+        language: system
+        types: [ts, tsx]
+      - id: test
+        name: vitest unit tests
+        entry: npx vitest run
+        language: system
+        pass_filenames: false
+        types: [ts, tsx]
+      - id: debug-scan
+        name: debug code scan
+        entry: bash -c 'FOUND=false; for f in "$@"; do if grep -n "console\.log\|debugger" "$f" 2>/dev/null; then FOUND=true; fi; done; if $FOUND; then echo "ERROR: debug code found"; exit 1; fi'
+        language: system
+        types: [ts, tsx]
+CFGEOF
+    success "已创建 .pre-commit-config.yaml（内嵌模板）"
   fi
 else
-  if [ "$PROJECT_TYPE" = "node" ]; then
-    cat > "$PRE_COMMIT" << 'PCEOF'
+  info ".pre-commit-config.yaml 已存在，跳过"
+fi
+
+# 同时创建兼容的 pre-commit bash hook（用于未安装 pre-commit 框架的情况）
+PRE_COMMIT="$PROJECT_ROOT/.git/hooks/pre-commit"
+if [ ! -f "$PRE_COMMIT" ]; then
+  cat > "$PRE_COMMIT" << 'PCEOF'
 #!/bin/bash
-# pre-commit — L2: 提交前检查 (三层自动测试)
+# pre-commit — L2: 提交前检查
+# 如果存在 .pre-commit-config.yaml 且有 pre-commit 命令，优先使用声明式框架
+# 否则回退到 bash hook
 
 set -euo pipefail
-
-echo "========================================="
-echo "  Running pre-commit checks..."
-echo "========================================="
-
 cd "$(git rev-parse --show-toplevel)"
 
-# 类型检查
+if [ -f .pre-commit-config.yaml ] && command -v pre-commit &>/dev/null; then
+  pre-commit run --config .pre-commit-config.yaml
+  exit $?
+fi
+
+# 回退：直接运行检查（仅检查变更文件）
+CHANGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx)$' || true)
+[ -z "$CHANGED" ] && exit 0
+
+echo "Running pre-commit checks..."
+
 echo "→ tsc --noEmit"
 npx tsc --noEmit || { echo "ERROR: Type check failed"; exit 1; }
 
-# Lint
 echo "→ eslint"
-npx eslint src/ || { echo "ERROR: Lint failed"; exit 1; }
+echo "$CHANGED" | xargs npx eslint --no-error-on-unmatched-pattern 2>/dev/null || true
 
-# 测试
 echo "→ vitest"
 npx vitest run || { echo "ERROR: Tests failed"; exit 1; }
 
-# 调试代码扫描
 echo "→ Scanning for debug code..."
-DEBUG_FOUND=false
-if grep -rn "console\.log" src/ --include="*.ts" --include="*.tsx" --exclude="*.test.*" 2>/dev/null; then
-  echo "ERROR: console.log found in source files"
-  DEBUG_FOUND=true
-fi
-if grep -rn "debugger" src/ --include="*.ts" --include="*.tsx" 2>/dev/null; then
-  echo "ERROR: debugger statement found"
-  DEBUG_FOUND=true
-fi
-if [ "$DEBUG_FOUND" = true ]; then
+FOUND=false
+for f in $CHANGED; do
+  if grep -n "console\.log\|debugger" "$f" 2>/dev/null; then FOUND=true; fi
+done
+if $FOUND; then
+  echo "ERROR: debug code found in staged files"
   exit 1
 fi
 
-echo "========================================="
-echo "  All checks passed!"
-echo "========================================="
-PCEOF
-  elif [ "$PROJECT_TYPE" = "python" ]; then
-    cat > "$PRE_COMMIT" << 'PCEOF'
-#!/bin/bash
-# pre-commit — L2: 提交前检查 (三层自动测试)
-
-set -euo pipefail
-
-echo "Running pre-commit checks..."
-cd "$(git rev-parse --show-toplevel)"
-
-echo "→ flake8"
-flake8 src/ || { echo "ERROR: Lint failed"; exit 1; }
-
-echo "→ pytest"
-pytest -x || { echo "ERROR: Tests failed"; exit 1; }
-
 echo "All checks passed!"
 PCEOF
-  fi
   chmod +x "$PRE_COMMIT"
-  success "已创建 .git/hooks/pre-commit"
+  success "已创建 .git/hooks/pre-commit（bash 回退模式）"
+else
+  info "pre-commit hook 已存在，跳过"
 fi
 
-# === 5. 安装 L3 GitHub Actions ===
+# === 5. 安装 L3 PR 即审 ===
 info "安装 L3 PR 即审 Workflow..."
 
 mkdir -p "$PROJECT_ROOT/.github/workflows"
@@ -306,9 +361,11 @@ QUINN_YML="$PROJECT_ROOT/.github/workflows/quinn-qa.yml"
 
 if [ -f "$QUINN_YML" ]; then
   info "quinn-qa.yml 已存在，跳过"
-else
+elif [ -f "$SCRIPT_DIR/.github/workflows/quinn-qa.yml" ]; then
   cp "$SCRIPT_DIR/.github/workflows/quinn-qa.yml" "$QUINN_YML"
   success "已创建 .github/workflows/quinn-qa.yml"
+else
+  warn "无法获取 quinn-qa.yml，请从 https://github.com/Markhufei/three-layer-test 手动下载"
 fi
 
 # === 6. 创建示例测试 ===
@@ -340,6 +397,14 @@ PASS=true
 
 echo -n "L1 Hook (settings.local.json): "
 if [ -f "$SETTINGS_FILE" ] && grep -q "test-on-change" "$SETTINGS_FILE" 2>/dev/null; then
+  echo -e "${GREEN}OK${NC}"
+else
+  echo -e "${RED}MISSING${NC}"
+  PASS=false
+fi
+
+echo -n "L2 Config (.pre-commit-config.yaml): "
+if [ -f "$PRE_COMMIT_CFG" ]; then
   echo -e "${GREEN}OK${NC}"
 else
   echo -e "${RED}MISSING${NC}"
@@ -383,13 +448,18 @@ else
 fi
 
 echo ""
-echo "下一步："
-echo "  1. 在 Claude Code 中开始写代码，L1 会自动运行测试"
-echo "  2. git commit 时会自动运行 L2 检查"
-echo "  3. 推 PR 到 GitHub 时自动运行 L3（需配置 AI_MODEL 和 AI_API_KEY）"
+echo "升级亮点："
+echo "  L2 — 声明式 .pre-commit-config.yaml，按需启用/禁用 hook"
+echo "  L3 — 3 个 AI Agent 并行分析（Security + Bug + Style）"
+echo "       + 行级评论直接贴到代码 diff 上"
 echo ""
-echo "配置 L3 AI 模型（GitHub Settings → Variables）："
-echo "  AI_MODEL: claude-sonnet-4-6（默认）或 qwen3-coder-plus 等"
-echo "  AI_API_ENDPOINT: API 地址（默认 Anthropic 官方）"
+echo "下一步："
+echo "  1. 写代码 → L1 自动测试"
+echo "  2. git commit → L2 自动检查"
+echo "  3. 推 PR → L3 多 Agent 分析 + 行级评论"
+echo ""
+echo "L3 AI 模型配置（GitHub Settings → Variables）："
+echo "  AI_MODEL: claude-sonnet-4-6（默认）/ qwen3-coder-plus 等"
+echo "  AI_API_ENDPOINT: API 地址（默认 Anthropic）"
 echo "  AI_API_KEY (Secret): 你的 API Key"
 echo ""

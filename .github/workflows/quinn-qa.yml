@@ -56,11 +56,45 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-  ai-qa-review:
-    name: AI QA Review
+  security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
-    needs: [unit-tests, e2e-tests]
-    if: success()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for secrets in diff
+        id: secrets-check
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          git diff origin/$BASE_REF...HEAD > diff.txt
+          FOUND=0
+          grep -iE "(aws_access_key_id|aws_secret_access_key)" diff.txt && FOUND=1
+          grep -iE "(private_key|BEGIN RSA|BEGIN EC|BEGIN OPENSSH)" diff.txt && FOUND=1
+          grep -iE "(password|secret|api_key|token)\s*[=:]\s*['\"][^'\"]+['\"]" diff.txt && FOUND=1
+          grep -iE "ghp_|gho_|github_pat_" diff.txt && FOUND=1
+          if [ "$FOUND" -eq 1 ]; then
+            echo "SECRETS_FOUND=true" >> $GITHUB_OUTPUT
+            echo "## Security Alert: Potential secrets detected" > security-report.txt
+            grep -iE "(aws_access|private_key|password.*=|secret.*=|api_key.*=|token.*=|ghp_|gho_|github_pat_)" diff.txt >> security-report.txt 2>&1 || true
+          else
+            echo "SECRETS_FOUND=false" >> $GITHUB_OUTPUT
+            echo "No secrets detected in PR diff." > security-report.txt
+          fi
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.txt
+          retention-days: 1
+
+  ai-qa-review:
+    name: AI QA Review (Multi-Agent)
+    runs-on: ubuntu-latest
+    needs: [unit-tests, e2e-tests, security-scan]
+    if: success() || needs.security-scan.result == 'success'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,102 +107,150 @@ jobs:
 
       - run: npm ci
 
-      - name: Run checks
-        id: checks
+      - name: Prepare PR data
+        id: prepare
         run: |
-          # 类型检查
-          echo "## tsc --noEmit" > check-output.txt
-          npx tsc --noEmit >> check-output.txt 2>&1 || true
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          git diff origin/$BASE_REF...HEAD > pr-diff.txt
+          echo "diff_lines=$(wc -l < pr-diff.txt)" >> $GITHUB_OUTPUT
+          git diff --name-only origin/$BASE_REF...HEAD > changed-files.txt
+          echo "changed_files=$(wc -l < changed-files.txt)" >> $GITHUB_OUTPUT
+          cp security-report.txt security-result.txt 2>/dev/null || echo "No security report." > security-result.txt
 
-          # Lint
-          echo -e "\n## eslint" >> check-output.txt
-          npx eslint src/ >> check-output.txt 2>&1 || true
-
-          # 调试代码搜索
-          echo -e "\n## Debug artifacts" >> check-output.txt
-          echo "### console.log (excl tests):" >> check-output.txt
-          grep -rn "console\.log" src/ --include="*.ts" --include="*.tsx" --exclude="*.test.*" >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
-          echo "### debugger:" >> check-output.txt
-          grep -rn "debugger" src/ >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
-          echo "### TODO/FIXME:" >> check-output.txt
-          grep -rn "TODO\|FIXME\|HACK" src/ >> check-output.txt 2>&1 || echo "(none)" >> check-output.txt
-
-      - name: Get PR diff
-        id: diff
-        run: |
-          git diff origin/master...HEAD > pr-diff.txt
-          echo "lines=$(wc -l < pr-diff.txt)" >> $GITHUB_OUTPUT
-
-      - name: AI QA Analysis
-        id: ai-review
-        if: steps.diff.outputs.lines != '0'
+      - name: Security Agent
+        id: security-agent
+        if: steps.prepare.outputs.diff_lines != '0'
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
           AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
           AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
         run: |
-          DIFF=$(head -200 pr-diff.txt | jq -Rs .)
-          CHECKS=$(cat check-output.txt | jq -Rs .)
+          DIFF=$(cat pr-diff.txt | jq -Rs .)
+          FILES=$(cat changed-files.txt | jq -Rs .)
+          SEC=$(cat security-result.txt | jq -Rs .)
+          PROMPT="You are a Security Engineer reviewing this PR.\n\n## Changed Files\n${FILES}\n\n## PR Diff\n${DIFF}\n\n## Automated Secret Scan\n${SEC}\n\nAnalyze for: SQL injection, XSS, hardcoded credentials, IDOR, auth bypass, sensitive data in logs, missing rate limiting.\n\nOutput: 🟡 WARNING/🔴 CRITICAL at [file:line], or 🟢 SAFE\nFinal VERDICT: PASS or FAIL"
+          BODY=$(jq -n --arg p "$PROMPT" --arg m "$AI_MODEL" '{model:$m,max_tokens:2000,messages:[{role:"user",content:$p}]}')
+          RESP=$(curl -s -w "\n%{http_code}" "$AI_API_ENDPOINT" -H "Content-Type: application/json" -H "x-api-key: $AI_API_KEY" -H "anthropic-version: $AI_API_VERSION" -d "$BODY")
+          echo "$RESPONSE" | tail -1 | sed '$d' | jq -r '.content[0].text // .error.message // "unavailable"' > security-agent-report.md 2>/dev/null || echo "Security analysis unavailable" > security-agent-report.md
+          HTTP=$(echo "$RESP" | tail -1); BODY=$(echo "$RESP" | sed '$d')
+          echo "$BODY" | jq -r '.content[0].text // .error.message // "unavailable"' > security-agent-report.md 2>/dev/null || echo "unavailable" > security-agent-report.md
 
-          # 构建 prompt
-          PROMPT="你是一个 QA 工程师。分析以下 PR 变更和检查结果，输出标准 QA 报告。\n\n## PR 变更\n${DIFF}\n\n## 检查结果\n${CHECKS}\n\n输出格式：\n1. 变更摘要（3句话内）\n2. 发现的问题（按严重程度分类 🔴/🟡/🟣）\n3. 最终 VERDICT: PASS 或 FAIL"
+      - name: Bug Agent
+        id: bug-agent
+        if: steps.prepare.outputs.diff_lines != '0'
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
+        run: |
+          DIFF=$(cat pr-diff.txt | jq -Rs .)
+          FILES=$(cat changed-files.txt | jq -Rs .)
+          PROMPT="You are a Senior Engineer reviewing this PR for bugs.\n\n## Changed Files\n${FILES}\n\n## PR Diff\n${DIFF}\n\nAnalyze for: null references, boundary errors, race conditions, resource leaks, wrong error handling, logic errors, type mismatches, breaking API changes.\n\nOutput: 🔴 BUG/🟡 CONCERN at [file:line], or 🟢 CLEAN\nFinal VERDICT: PASS or FAIL"
+          BODY=$(jq -n --arg p "$PROMPT" --arg m "$AI_MODEL" '{model:$m,max_tokens:2000,messages:[{role:"user",content:$p}]}')
+          RESP=$(curl -s -w "\n%{http_code}" "$AI_API_ENDPOINT" -H "Content-Type: application/json" -H "x-api-key: $AI_API_KEY" -H "anthropic-version: $AI_API_VERSION" -d "$BODY")
+          HTTP=$(echo "$RESP" | tail -1); BODY=$(echo "$RESP" | sed '$d')
+          echo "$BODY" | jq -r '.content[0].text // .error.message // "unavailable"' > bug-agent-report.md 2>/dev/null || echo "unavailable" > bug-agent-report.md
 
-          # 调用 AI API（Anthropic 兼容格式）
-          BODY=$(jq -n \
-            --arg prompt "$PROMPT" \
-            --arg model "$AI_MODEL" \
-            '{
-              model: $model,
-              max_tokens: 2000,
-              messages: [{ role: "user", content: ($prompt) }]
-            }')
+      - name: Style Agent
+        id: style-agent
+        if: steps.prepare.outputs.diff_lines != '0'
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_API_ENDPOINT: ${{ vars.AI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'claude-sonnet-4-6' }}
+          AI_API_VERSION: ${{ vars.AI_API_VERSION || '2023-06-01' }}
+        run: |
+          DIFF=$(cat pr-diff.txt | jq -Rs .)
+          FILES=$(cat changed-files.txt | jq -Rs .)
+          PROMPT="You are a Tech Lead reviewing code style and maintainability.\n\n## Changed Files\n${FILES}\n\n## PR Diff\n${DIFF}\n\nAnalyze for: naming, function length/complexity, duplication, missing comments, unused imports, magic numbers, inconsistent formatting.\n\nOutput: 🟡 SUGGESTION/🔴 ISSUE at [file:line], or 🟢 CLEAN\nFinal VERDICT: PASS or FAIL"
+          BODY=$(jq -n --arg p "$PROMPT" --arg m "$AI_MODEL" '{model:$m,max_tokens:2000,messages:[{role:"user",content:$p}]}')
+          RESP=$(curl -s -w "\n%{http_code}" "$AI_API_ENDPOINT" -H "Content-Type: application/json" -H "x-api-key: $AI_API_KEY" -H "anthropic-version: $AI_API_VERSION" -d "$BODY")
+          HTTP=$(echo "$RESP" | tail -1); BODY=$(echo "$RESP" | sed '$d')
+          echo "$BODY" | jq -r '.content[0].text // .error.message // "unavailable"' > style-agent-report.md 2>/dev/null || echo "unavailable" > style-agent-report.md
 
-          echo "Model: $AI_MODEL"
-          echo "Endpoint: $AI_API_ENDPOINT"
-          RESPONSE=$(curl -s -w "\n%{http_code}" "$AI_API_ENDPOINT" \
-            -H "Content-Type: application/json" \
-            -H "x-api-key: $AI_API_KEY" \
-            -H "anthropic-version: $AI_API_VERSION" \
-            -d "$BODY")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY_ONLY=$(echo "$RESPONSE" | sed '$d')
-
-          echo "HTTP Status: $HTTP_CODE"
-          echo "Response: $(echo "$BODY_ONLY" | head -c 500)"
-
-          # 提取文本内容
-          AI_TEXT=$(echo "$BODY_ONLY" | jq -r '.content[0].text // .error.message // "AI analysis unavailable"')
-          echo "$AI_TEXT" > qa-report.md
-
-          echo "::group::QA Report"
-          cat qa-report.md
-          echo "::endgroup::"
-
-      - name: Post QA Report
+      - name: Post Line-Level Comments
         if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            function parseLineComments(reportPath, agentName) {
+              if (!fs.existsSync(reportPath)) return [];
+              const report = fs.readFileSync(reportPath, 'utf8');
+              const comments = [];
+              for (const line of report.split('\n')) {
+                const match = line.match(/(?:🔴|🟡|🟢)\s+\S+:\s+(.*?)\s+at\s+(\S+):(\d+)/);
+                if (match) {
+                  comments.push({
+                    body: `${agentName}: ${match[1]}`,
+                    path: match[2],
+                    line: parseInt(match[3]),
+                    level: line.includes('🔴') ? 'CRITICAL' : line.includes('🟡') ? 'WARNING' : 'INFO'
+                  });
+                }
+              }
+              return comments;
+            }
+            const allComments = [
+              ...parseLineComments('security-agent-report.md', '🛡️ Security Agent'),
+              ...parseLineComments('bug-agent-report.md', '🐛 Bug Agent'),
+              ...parseLineComments('style-agent-report.md', '🎨 Style Agent')
+            ];
+            for (const c of allComments) {
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  body: c.body, path: c.path, line: c.line, side: 'RIGHT'
+                });
+              } catch (e) { /* skip out-of-range lines */ }
+            }
+            console.log(`Posted ${allComments.length} line-level comments`);
 
-            let report = '## Quinn QA Report\n\n';
-
-            // 检查结果
-            report += '| Check | Result |\n|-------|--------|\n';
+      - name: Post Consolidated QA Report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let report = '## Quinn QA Report — Multi-Agent Review\n\n';
+            report += '### Test Results\n';
+            report += '| Check | Status |\n|-------|--------|\n';
             report += '| Unit Tests | ✅ Passed |\n';
             report += '| E2E Tests | ✅ Passed |\n';
-
-            // AI 分析
-            if (fs.existsSync('qa-report.md')) {
-              const aiReport = fs.readFileSync('qa-report.md', 'utf8');
-              report += '\n### AI Analysis\n\n' + aiReport;
-            } else {
-              report += '\n### AI Analysis\n\n⚠️ AI review skipped (no changes detected)';
+            if (fs.existsSync('security-report.txt')) {
+              const sec = fs.readFileSync('security-report.txt', 'utf8');
+              const hasSecrets = sec.includes('SECRETS_FOUND=true');
+              report += `| Secret Scan | ${hasSecrets ? '🔴 Detected' : '✅ Clean'} |\n`;
             }
-
+            report += '\n### AI Agent Reports\n\n';
+            const agents = [
+              { file: 'security-agent-report.md', title: '🛡️ Security Agent' },
+              { file: 'bug-agent-report.md', title: '🐛 Bug Agent' },
+              { file: 'style-agent-report.md', title: '🎨 Style Agent' }
+            ];
+            for (const a of agents) {
+              if (fs.existsSync(a.file)) {
+                const content = fs.readFileSync(a.file, 'utf8');
+                const verdict = content.includes('VERDICT: FAIL') ? '❌ FAIL' :
+                               content.includes('VERDICT: PASS') ? '✅ PASS' : '⚠️ N/A';
+                report += `**${a.title}** — ${verdict}\n\n`;
+                report += content.replace(/Final VERDICT: (PASS|FAIL)\n?/, '') + '\n\n';
+                const crits = (content.match(/🔴/g) || []).length;
+                const warns = (content.match(/🟡/g) || []).length;
+                if (crits) report += `> 🔴 ${crits} critical\n`;
+                if (warns) report += `> 🟡 ${warns} warnings\n`;
+                report += '\n---\n\n';
+              } else {
+                report += `**${a.title}** — ⚠️ unavailable\n\n---\n\n`;
+              }
+            }
+            report += '*Line-level comments posted directly on the diff.*\n';
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
