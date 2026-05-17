@@ -178,15 +178,15 @@ chmod +x .git/hooks/pre-commit
 
 创建 `.github/workflows/quinn-qa.yml`（如已存在则跳过或询问用户是否覆盖）。
 
-**关键：AI 模型可配置**，通过 GitHub Repository Variables 设置：
+**关键：AI 模型必须由用户自定义**，通过 GitHub Repository Variables 设置：
 
-| Variable | 默认值 | 说明 |
-|----------|--------|------|
-| `AI_API_ENDPOINT` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | 百炼-Coding Plan |
-| `AI_MODEL` | `qwen3.6-plus` | 模型名称 |
-| `AI_API_VERSION` | `2023-06-01` | API 版本 |
+| Variable | 值 | 说明 |
+|----------|-----|------|
+| `AI_API_ENDPOINT` | （必填）API 地址 | 如 `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
+| `AI_MODEL` | （必填）模型名称 | 如 `qwen3.6-plus` |
+| `AI_API_VERSION` | （必填）API 版本 | 如 `2023-06-01` |
 
-Secret 需设置：`AI_API_KEY`（百炼控制台获取）
+Secret 需设置：`AI_API_KEY`（必填）
 
 workflow 文件内容从当前仓库 `.github/workflows/quinn-qa.yml` 复制。
 
@@ -231,9 +231,9 @@ echo "=== L3 Workflow ==="
 
 | 变量 | 设置值 | 示例 |
 |------|--------|------|
-| `AI_MODEL` | 模型名称 | `qwen3.6-plus` / `claude-opus-4-7` |
-| `AI_API_ENDPOINT` | API 地址 | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
-| `AI_API_VERSION` | API 版本 | `2023-06-01` |
+| `AI_MODEL` | （必填）模型名称 | `qwen3.6-plus` / `claude-sonnet-4-6` |
+| `AI_API_ENDPOINT` | （必填）API 地址 | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
+| `AI_API_VERSION` | （必填）API 版本 | `2023-06-01` |
 
 ### 配置 API 密钥（GitHub Secrets）
 
@@ -241,13 +241,13 @@ Settings → Secrets and variables → Actions → Repository secrets：
 
 | Secret | 值 |
 |--------|-----|
-| `AI_API_KEY` | 百炼控制台获取 |
+| `AI_API_KEY` | （必填）你的 API Key |
 
 ### 常用模型配置参考
 
 | 平台 | AI_MODEL | AI_API_ENDPOINT |
 |------|----------|-----------------|
-| 百炼-Coding Plan（默认） | `qwen3.6-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
+| 百炼-Coding Plan | `qwen3.6-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
 | Anthropic 官方 | `claude-sonnet-4-6` | `https://api.anthropic.com/v1/messages` |
 | Anthropic Opus | `claude-opus-4-7` | `https://api.anthropic.com/v1/messages` |
 

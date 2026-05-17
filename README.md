@@ -88,25 +88,22 @@ repos:
 
 L3 的 AI QA Review 支持任意 Anthropic 兼容接口的模型，通过 **GitHub Repository Variables** 配置：
 
-### 必须配置的 Secret
+### 必须配置
 
-| Secret | 说明 |
-|--------|------|
-| `AI_API_KEY` | 你的 API Key |
+| 类型 | 名称 | 值 |
+|------|------|-----|
+| Secret | `AI_API_KEY` | 你的 API Key |
+| Variable | `AI_MODEL` | 模型名称，如 `qwen3.6-plus` |
+| Variable | `AI_API_ENDPOINT` | API 地址 |
+| Variable | `AI_API_VERSION` | API 版本，如 `2023-06-01` |
 
-### 可选配置 Variables（有合理默认值）
+**必须在 GitHub Settings 中配置以上 4 项**，否则 L3 AI Review 不会生效。
 
-| Variable | 默认值 | 说明 |
-|----------|--------|------|
-| `AI_MODEL` | `qwen3.6-plus` | 模型名称 |
-| `AI_API_ENDPOINT` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | 百炼-Coding Plan |
-| `AI_API_VERSION` | `2023-06-01` | API 版本 |
-
-### 常用模型配置
+### 常用模型配置参考
 
 | 平台 | AI_MODEL | AI_API_ENDPOINT |
 |------|----------|-----------------|
-| 百炼-Coding Plan（默认） | `qwen3.6-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
+| 百炼-Coding Plan | `qwen3.6-plus` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` |
 | Anthropic 官方 | `claude-sonnet-4-6` | `https://api.anthropic.com/v1/messages` |
 | Anthropic Opus | `claude-opus-4-7` | `https://api.anthropic.com/v1/messages` |
 
@@ -114,8 +111,8 @@ L3 的 AI QA Review 支持任意 Anthropic 兼容接口的模型，通过 **GitH
 
 1. 打开仓库的 GitHub 页面
 2. **Settings → Actions → Variables and secrets → Actions**
-3. 在 **Repository secrets** 中添加 `AI_API_KEY`（[百炼控制台获取](https://bailian.console.aliyun.com/)）
-4. 在 **Repository variables** 中添加 `AI_MODEL`、`AI_API_ENDPOINT`（可选）
+3. 在 **Repository secrets** 中添加 `AI_API_KEY`
+4. 在 **Repository variables** 中添加 `AI_MODEL`、`AI_API_ENDPOINT`、`AI_API_VERSION`
 
 ## 文件结构
 
